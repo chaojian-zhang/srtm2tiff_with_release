@@ -23,89 +23,125 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.IO;
+#if WIN64
+using System.Windows.Forms;
+#endif
 
 namespace srtm2tiff
 {
     class Program
     {
+#if WIN64
+        [STAThread]
+#endif
         static void Main(string[] args)
         {
             if (args.Length < 1)
             {
                 WriteInstructions();
+
+#if WIN64
+                ShowFileBrowserPrompt();
+#endif
             }
             else
+                ProcessArguments(args);
+        }
+
+#if WIN64
+        private static void ShowFileBrowserPrompt()
+        {
+            Console.WriteLine("Do you wish to open file browser to select files?");
+            Console.Write("Press `Enter` to continue, press `ESC` to exit: ");
+            var key = Console.ReadKey();
+
+            if (key.Key == ConsoleKey.Enter)
             {
-                bool verbose = false;
-                int i = 0, count = args.Length;
-
-                if (args[0] == "-verbose")
+                using (OpenFileDialog openFileDialog = new OpenFileDialog())
                 {
-                    verbose = true;
-                    i++;
+                    openFileDialog.InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyComputer);
+                    openFileDialog.Filter = "hgt files (*.hgt)|*.hgt|All files (*.*)|*.*";
+                    openFileDialog.RestoreDirectory = true;
+                    openFileDialog.Multiselect = true;
 
-                    if (args.Length == 1)
+                    if (openFileDialog.ShowDialog() == DialogResult.OK)
+                        ProcessArguments(openFileDialog.FileNames);
+                }
+            }
+        }
+#endif
+
+        private static void ProcessArguments(string[] args)
+        {
+            bool verbose = false;
+            int i = 0, count = args.Length;
+
+            if (args[0] == "-verbose")
+            {
+                verbose = true;
+                i++;
+
+                if (args.Length == 1)
+                {
+                    WriteInstructions();
+                    Environment.Exit(0);
+                }
+            }
+
+            for (; i < count; i++)
+            {
+                try
+                {
+                    FileStream file = File.Open(args[i], FileMode.Open);
+                    BinaryReader reader = new BinaryReader(file);
+
+                    SRTMFormat format = SRTMFormat.Unknown;
+
+                    if (file.Length == 3601 * 3601 * sizeof(Int16))
                     {
-                        WriteInstructions();
-                        Environment.Exit(0);
+                        format = SRTMFormat.SRTM1;
+                    }
+                    else if (file.Length == 1201 * 1201 * sizeof(Int16))
+                    {
+                        format = SRTMFormat.SRTM3;
+                    }
+
+                    if (verbose)
+                    {
+                        Console.WriteLine("Reading SRTM file: " + args[i]);
+                        Console.WriteLine(" - Length: " + file.Length + " Bytes");
+                        Console.WriteLine(" - Format: " + format.ToString() + Environment.NewLine);
+                    }
+
+                    SRTMReader srtm = new SRTMReader(reader, format);
+                    srtm.ReadAllData(false);
+
+                    BitmapTerrain bmpTerrain = new BitmapTerrain(srtm.GetTileSize(), srtm.GetTileSize());
+                    bmpTerrain.ConvertFromSRTM(srtm, BitmapChannels.ChannelRed | BitmapChannels.ChannelGreen);
+
+                    if (verbose)
+                    {
+                        Console.WriteLine("Writing TIFF file from SRTM file...");
+                    }
+
+                    string tiffPath = args[i];
+                    int dot = tiffPath.IndexOf('.');
+                    tiffPath = tiffPath.Substring(0, dot);
+                    tiffPath += ".tiff";
+
+                    TIFFWriter.ExportTIFF(bmpTerrain.GetBitmap(), tiffPath);
+
+                    if (verbose)
+                    {
+                        Console.WriteLine("Success" + Environment.NewLine);
                     }
                 }
-
-                for (; i < count; i++)
+                catch (Exception ex)
                 {
-                    try
+                    if (verbose)
                     {
-                        FileStream file = File.Open(args[i], FileMode.Open);
-                        BinaryReader reader = new BinaryReader(file);
-
-                        SRTMFormat format = SRTMFormat.Unknown;
-
-                        if (file.Length == 3601 * 3601 * sizeof(Int16))
-                        {
-                            format = SRTMFormat.SRTM1;
-                        }
-                        else if (file.Length == 1201 * 1201 * sizeof(Int16))
-                        {
-                            format = SRTMFormat.SRTM3;
-                        }
-
-                        if (verbose)
-                        {
-                            Console.WriteLine("Reading SRTM file: " + args[i]);
-                            Console.WriteLine(" - Length: " + file.Length + " Bytes");
-                            Console.WriteLine(" - Format: " + format.ToString() + Environment.NewLine);
-                        }
-
-                        SRTMReader srtm = new SRTMReader(reader, format);
-                        srtm.ReadAllData(false);
-
-                        BitmapTerrain bmpTerrain = new BitmapTerrain(srtm.GetTileSize(), srtm.GetTileSize());
-                        bmpTerrain.ConvertFromSRTM(srtm, BitmapChannels.ChannelRed | BitmapChannels.ChannelGreen);
-
-                        if (verbose)
-                        {
-                            Console.WriteLine("Writing TIFF file from SRTM file...");
-                        }
-
-                        string tiffPath = args[i];
-                        int dot = tiffPath.IndexOf('.');
-                        tiffPath = tiffPath.Substring(0, dot);
-                        tiffPath += ".tiff";
-
-                        TIFFWriter.ExportTIFF(bmpTerrain.GetBitmap(), tiffPath);
-
-                        if (verbose)
-                        {
-                            Console.WriteLine("Success" + Environment.NewLine);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        if (verbose)
-                        {
-                            Console.WriteLine("Couldn't convert SRTM file:");
-                            Console.WriteLine(ex.Message + Environment.NewLine);
-                        }
+                        Console.WriteLine("Couldn't convert SRTM file:");
+                        Console.WriteLine(ex.Message + Environment.NewLine);
                     }
                 }
             }
